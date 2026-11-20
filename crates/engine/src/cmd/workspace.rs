@@ -589,16 +589,16 @@ pub fn infographic_of(s: &Session, only: Option<&str>) -> Value {
         if only.as_ref().is_some_and(|o| *o != l.name.to_ascii_lowercase()) {
             continue;
         }
-        // The view in the layer's own coordinates, as its features' boxes are.
+        // Intersect the actual geometry with the extent in the layer's coordinates. A line's
+        // box can meet the view even when none of its segments do.
         let own = l.dataset.extent_from_lonlat(&e);
         let rows: Vec<usize> = l
             .visible_rows()
-            .iter()
+            .into_iter()
             .enumerate()
-            .filter(|(r, v)| {
-                **v && l.dataset.features.get(*r).and_then(|f| f.geometry.as_ref()).is_some_and(|g| g.extent().intersects(&own))
+            .filter_map(|(row, visible)| {
+                (visible && l.dataset.features.geometry(row).is_some_and(|g| g.intersects_extent(&own))).then_some(row)
             })
-            .map(|(r, _)| r)
             .collect();
         let numbers: Vec<Value> = l
             .dataset
@@ -940,4 +940,31 @@ fn profile_inputs(input: &super::InputContext<'_>, p: &Value) -> Result<super::I
 /// Parses the same required line-layer name used by profile extraction.
 fn profile_lines(p: &Value) -> Result<&str, String> {
     ps(p, "lines").ok_or("lines (a line layer) is required".into())
+}
+
+#[cfg(test)]
+mod infographic_tests {
+    use super::*;
+
+    fn features(s: &mut Session, name: &str, features: Value) {
+        let text = json!({"type": "FeatureCollection", "features": features}).to_string();
+        s.run("layer.addDataText", &json!({"fileName": format!("{name}.geojson"), "text": text})).unwrap();
+    }
+
+    #[test]
+    fn infographic_uses_geometry_and_not_its_box() {
+        let mut s = Session::new(crate::project::Project::new("Infographics"));
+        features(
+            &mut s,
+            "lines",
+            json!([
+                {"type": "Feature", "properties": {"value": 1}, "geometry": {"type": "LineString", "coordinates": [[-1, 0], [1, 0]]}},
+                {"type": "Feature", "properties": {"value": 99}, "geometry": {"type": "LineString", "coordinates": [[-10, -5], [5, 10]]}}
+            ]),
+        );
+        s.run("map.zoomToExtent", &json!({"extent": [-0.1, -0.1, 0.1, 0.1]})).unwrap();
+        let stats = s.run("info.infographic", &json!({"layer": "lines"})).unwrap();
+        assert_eq!(stats["layers"][0]["count"], 1);
+        assert_eq!(stats["layers"][0]["numbers"][0]["sum"], 1.0);
+    }
 }
