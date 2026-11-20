@@ -1262,14 +1262,14 @@ fn search_disabled(app: &RustGisApp, id: &str) -> Option<&'static str> {
     })
 }
 
-/// Whether the query matches a registry command's search row.
-fn command_matches(c: &rustgis_engine::CommandSpec, ql: &str) -> bool {
+/// Matches registry and UI command rows against the same lowercased query.
+fn command_matches(id: &str, label: &str, location: &str, ql: &str) -> bool {
     ql.is_empty()
-        || c.label.to_lowercase().contains(ql)
-        || c.id.to_lowercase().contains(ql)
-        || c.location.to_lowercase().contains(ql)
-        || tl_raw!(c.label).to_lowercase().contains(ql)
-        || crate::i18n::location_raw(c.location).to_lowercase().contains(ql)
+        || label.to_lowercase().contains(ql)
+        || id.to_lowercase().contains(ql)
+        || location.to_lowercase().contains(ql)
+        || tl_raw!(label).to_lowercase().contains(ql)
+        || crate::i18n::location_raw(location).to_lowercase().contains(ql)
 }
 
 /// The command palette: type to filter every command, Enter runs the first.
@@ -1337,7 +1337,7 @@ pub fn command_search(app: &mut RustGisApp, ctx: &egui::Context) {
                     && !app.session.registry.commands.iter().any(|c| {
                         c.label == label
                             && matches!(search_action(c.id), Some(SearchAction::Workflow(s)) if s == section)
-                            && command_matches(c, &ql)
+                            && command_matches(c.id, c.label, c.location, &ql)
                     })
                 {
                     hits.push((format!("pane:{section}"), tl!(label).to_string(), crate::i18n::location("Workflows")));
@@ -1348,7 +1348,7 @@ pub fn command_search(app: &mut RustGisApp, ctx: &egui::Context) {
             // A command of an extension that is off isn't offered (#1752).
             if command_available(c.id, cfg!(target_arch = "wasm32"))
                 && app.session.extensions().blocks(c.id).is_none()
-                && command_matches(c, &ql)
+                && command_matches(c.id, c.label, c.location, &ql)
             {
                 hits.push((c.id.to_string(), tl!(c.label).to_string(), crate::i18n::location(c.location)));
             }
@@ -1389,7 +1389,7 @@ pub fn command_search(app: &mut RustGisApp, ctx: &egui::Context) {
             if id == "ui.touchInterface" && app.touch.is_none() {
                 continue;
             }
-            if ql.is_empty() || label.to_lowercase().contains(&ql) || tl_raw!(label).to_lowercase().contains(&ql) {
+            if command_matches(id, label, loc, &ql) {
                 hits.push((id.into(), tl!(label).into(), crate::i18n::location(loc)));
             }
         }
@@ -1684,11 +1684,52 @@ mod tests {
     fn command_search_matches_localized_labels_and_locations() {
         let app = RustGisApp::with_sample();
         let new_project = app.session.registry.get("project.new").unwrap();
+        let zoom_in = app.session.registry.get("map.zoomIn").unwrap();
         let previous = crate::i18n::current();
         crate::i18n::set_current(crate::i18n::lang_from_tag("zh").unwrap());
-        let matches = ["新建工程", "工程", "new project", "project.new"].map(|query| command_matches(new_project, query));
+        let labels = ["新建工程", "new project", "project.new"]
+            .map(|query| command_matches(new_project.id, new_project.label, new_project.location, query));
+        let location = command_matches(zoom_in.id, zoom_in.label, zoom_in.location, "主页 › 导航");
         crate::i18n::set_current(previous);
-        assert_eq!(matches, [true; 4]);
+        assert_eq!(labels, [true; 3]);
+        assert!(location, "the Zoom In command is searchable by its translated ribbon location");
+    }
+
+    #[test]
+    fn command_search_matches_mixed_direction_labels_in_logical_order() {
+        let app = RustGisApp::with_sample();
+        let add_postgis = app.session.registry.get("pg.addLayer").unwrap();
+        let previous = crate::i18n::current();
+        crate::i18n::set_current(crate::i18n::lang_from_tag("fa").unwrap());
+        let query = "افزودن لایه postgis";
+        let matches = command_matches(add_postgis.id, add_postgis.label, add_postgis.location, query);
+        let display_matches = tl!(add_postgis.label).to_lowercase().contains(query);
+        crate::i18n::set_current(previous);
+        assert!(!display_matches, "the display label reverses the Latin run");
+        assert!(matches, "the typed label matches in logical order");
+    }
+
+    #[test]
+    fn command_search_matches_ui_command_id_and_location() {
+        use egui_kittest::kittest::Queryable;
+
+        let lang = crate::i18n::lang_from_tag("zh").unwrap();
+        // This test checks accessibility labels and works on runners without Chinese fonts.
+        let mut h = egui_kittest::Harness::builder().allow_missing_glyphs().with_size(vec2(800.0, 600.0)).build_ui_state(
+            move |ui, app: &mut RustGisApp| {
+                let previous = crate::i18n::current();
+                crate::i18n::set_current(lang);
+                command_search(app, ui.ctx());
+                crate::i18n::set_current(previous);
+            },
+            RustGisApp::with_sample(),
+        );
+        // The label contains neither the stable ID nor the full ribbon location.
+        for query in ["UI.DatumGrids", "Settings › Datum Grids", "设置 › 基准转换格网"] {
+            h.state_mut().ui.command_search = Some(query.into());
+            h.run_steps(3);
+            h.get_by_label_contains("开关基准转换格网下载");
+        }
     }
 
     /// Command Search's Definition Query opens the Layer Properties pane on its Query tab (#1803),
