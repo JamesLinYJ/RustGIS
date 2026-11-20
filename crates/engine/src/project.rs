@@ -1663,9 +1663,11 @@ impl Project {
 
     /// Writes checked durable text atomically and returns counted losses from the guarded output.
     pub fn save(&mut self, path: &Path) -> Result<crate::durable::Report, String> {
-        let dir = std::path::absolute(path).ok().and_then(|p| p.parent().map(Path::to_path_buf));
-        let (text, stripped) = self.saved_text(dir.as_deref())?;
-        rustgis_data::io::write_atomic(path, text.as_bytes()).map_err(|e| format!("could not save {}: {e}", path.display()))?;
+        let error = |e: std::io::Error| format!("could not save {}: {e}", path.display());
+        let target = project_file_target(path).map_err(error)?;
+        let (text, stripped) = self.saved_text(target.parent())?;
+        // The relative paths and the atomic write use the same resolved destination.
+        rustgis_data::io::replace_atomic(&target, text.as_bytes()).map_err(error)?;
         Ok(stripped)
     }
 
@@ -1807,9 +1809,10 @@ impl Project {
     /// Opens a project file (a regular file within [`max_bytes`]; see `read_file`), resolving
     /// its relative paths against its folder.
     pub fn load(path: &Path) -> Result<Project, String> {
+        let target = project_file_target(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let max = max_bytes();
         // Past the limit: said with its size and the limit here, before anything is read.
-        if let Ok(meta) = std::fs::metadata(path)
+        if let Ok(meta) = std::fs::metadata(&target)
             && meta.is_file()
             && meta.len() > max
         {
@@ -1834,11 +1837,33 @@ impl Project {
                 limit_said(max)
             ));
         }
-        let bytes = read_file(path, max)?;
+        let bytes = read_file(&target, max)?;
         let text = String::from_utf8(bytes).map_err(|_| format!("{} isn't a RustGIS project", path.display()))?;
-        let dir = std::path::absolute(path).ok().and_then(|p| p.parent().map(Path::to_path_buf));
-        Self::read_json(&text, true, dir.as_deref(), true, None)
+        Self::read_json(&text, true, target.parent(), true, None)
     }
+}
+
+/// Use the folder of the file actually opened or replaced, including when the project is a link.
+fn project_file_target(path: &Path) -> std::io::Result<std::path::PathBuf> {
+    let target = std::path::absolute(rustgis_data::io::link_target(path)?)?;
+    #[cfg(unix)]
+    {
+        let has_parent_step = |p: &Path| p.components().any(|c| c == std::path::Component::ParentDir);
+        if let Some((dir, name)) = target.parent().zip(target.file_name())
+            && has_parent_step(dir)
+        {
+            // After a directory link, the operating system and lexical paths can disagree on `..`.
+            // Resolve the folder, then keep as much of its original prefix as still names it.
+            // Common aliases (such as macOS's /var) then still match the linked layers' paths.
+            let real = dir.canonicalize()?;
+            let resolved = dir.ancestors().skip_while(|p| has_parent_step(p)).find_map(|p| {
+                let physical = p.canonicalize().ok()?;
+                Some(p.join(real.strip_prefix(physical).ok()?))
+            });
+            return Ok(resolved.unwrap_or(real).join(name));
+        }
+    }
+    Ok(target)
 }
 
 /// Starts reading the overviews of a map's raster layers read in place and not read yet, all at

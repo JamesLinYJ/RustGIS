@@ -224,9 +224,10 @@ embeds linked rasters within a size limit, while large files read in place, data
 layers stay linked; it opens as a new, unsaved project.
 
 Relative linked paths, including bare paths in older or hand-written files, are interpreted
-against the project's folder, never the process's working directory. Resolution is lexical:
-it does not follow symbolic links. Avoid `..` after a symlinked directory; choose the direct
-data location instead.
+against the project's folder, never the process's working directory. When you open or save
+through a symbolic link to a project file, RustGIS uses the target file's folder. The paths
+to linked data are resolved lexically. Use the direct data location if a path would put `..`
+after a symlinked directory.
 
 On the backstage's **Start** or **New** page, choose a blank **Map**, the **World Atlas** sample or
 **Open…**. **Save** and **Save As** write the project, named after its file; a project opened

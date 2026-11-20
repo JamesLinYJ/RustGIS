@@ -107,6 +107,53 @@ fn open(path: &Path) -> Session {
     s
 }
 
+/// The project file and its relative layer references must agree on the containing folder.
+#[cfg(unix)]
+#[test]
+fn project_file_symlink_keeps_its_targets_relative_layers() {
+    use rustgis_engine::data::io::{read_geojson, write_path};
+    use std::os::unix::fs::symlink;
+
+    let f = Fixture::new("project-link");
+    let original_data = f.file("projects/points.fgb");
+    for (path, x) in [(&original_data, 1), (&f.file("links/deep/points.fgb"), 3)] {
+        let text = json!({"type":"FeatureCollection", "features":[{
+            "type":"Feature", "properties":{}, "geometry":{"type":"Point", "coordinates":[x, 2]}
+        }]});
+        let (dataset, _) = read_geojson(&text.to_string(), "points").unwrap();
+        write_path(&dataset, path).unwrap();
+    }
+    let target = f.file("projects/survey.rgis");
+    let link = f.file("links/deep/survey.rgis");
+    let second = f.file("links/deep/entry.rgis");
+    let directory_link = f.file("links/deep/through");
+    std::fs::create_dir_all(f.file("projects/child")).unwrap();
+    symlink("../../projects/child", &directory_link).unwrap();
+    symlink("through/../survey.rgis", &second).unwrap();
+    symlink("entry.rgis", &link).unwrap();
+
+    let mut s = session();
+    add_stream(&mut s, &original_data, None);
+    // Save As creates the file at the end of a dangling chain, preserving both links.
+    s.run("project.saveAs", &json!({"path": link})).unwrap();
+    assert!(std::fs::read_to_string(&target).unwrap().contains("\"./points.fgb\""));
+    assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("entry.rgis"));
+    assert_eq!(std::fs::read_link(&second).unwrap(), Path::new("through/../survey.rgis"));
+
+    let check = |path: &Path| {
+        let mut s = open(path);
+        let out = f.file("check.geojson");
+        s.run("share.exportLayer", &json!({"layer":"points", "path":out})).unwrap();
+        let output: Value = serde_json::from_slice(&std::fs::read(out).unwrap()).unwrap();
+        assert_eq!(output["features"][0]["geometry"]["coordinates"], json!([1.0, 2.0]));
+    };
+    check(&target);
+    check(&link);
+    open(&link).run("project.save", &Value::Null).unwrap();
+    check(&target);
+    check(&link);
+}
+
 #[test]
 fn moving_project_folder_keeps_every_local_source() {
     let mut f = Fixture::new("move");

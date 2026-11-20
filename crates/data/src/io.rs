@@ -1116,7 +1116,7 @@ fn atomic_write_at<T, E: From<std::io::Error>>(
 /// The file a write to `path` replaces: `path` itself, or, when it is a symbolic link, the file
 /// its chain of links ends at (which need not exist yet). A link's relative target counts from
 /// the link's folder. More than [`MAX_LINKS`] links in a row, as in a loop, is an error.
-fn link_target(path: &Path) -> std::io::Result<std::path::PathBuf> {
+pub fn link_target(path: &Path) -> std::io::Result<std::path::PathBuf> {
     let mut at = path.to_path_buf();
     for _ in 0..=MAX_LINKS {
         match std::fs::symlink_metadata(&at) {
