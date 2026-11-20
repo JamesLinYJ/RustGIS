@@ -335,7 +335,9 @@ fn tab_strip(app: &mut RustGisApp, ui: &mut Ui, t: &Tokens) {
             }
             let icon = if app.ui.ribbon_minimized { "chevron_down" } else { "up" };
             icons::paint(ui.painter(), cr.shrink(5.0), icon, t.text_dim, t.accent);
-            let tip = if app.ui.ribbon_minimized { tl!("Expand the ribbon (Ctrl+F1)") } else { tl!("Collapse the ribbon (Ctrl+F1)") };
+            let title = if app.ui.ribbon_minimized { tl!("Expand the ribbon") } else { tl!("Collapse the ribbon") };
+            let shortcut = crate::keymap::shortcut_text(ui.ctx(), app, "ui.ribbon", &Value::Null);
+            let tip = if shortcut.is_empty() { title.to_string() } else { format!("{title} ({shortcut})") };
             if cresp.on_hover_text(tip).clicked() {
                 let _ = app.run("ui.ribbon", Value::Null);
             }

@@ -1264,7 +1264,12 @@ fn search_disabled(app: &RustGisApp, id: &str) -> Option<&'static str> {
 
 /// Whether the query matches a registry command's search row.
 fn command_matches(c: &rustgis_engine::CommandSpec, ql: &str) -> bool {
-    ql.is_empty() || c.label.to_lowercase().contains(ql) || c.id.to_lowercase().contains(ql) || c.location.to_lowercase().contains(ql)
+    ql.is_empty()
+        || c.label.to_lowercase().contains(ql)
+        || c.id.to_lowercase().contains(ql)
+        || c.location.to_lowercase().contains(ql)
+        || tl_raw!(c.label).to_lowercase().contains(ql)
+        || crate::i18n::location_raw(c.location).to_lowercase().contains(ql)
 }
 
 /// The command palette: type to filter every command, Enter runs the first.
@@ -1312,7 +1317,7 @@ pub fn command_search(app: &mut RustGisApp, ctx: &egui::Context) {
             if !ql.is_empty()
                 && (tool.name.to_lowercase().contains(&ql)
                     || tool.id.to_lowercase().contains(&ql)
-                    || tl!(tool.name).to_lowercase().contains(&ql))
+                    || tl_raw!(tool.name).to_lowercase().contains(&ql))
             {
                 hits.push((
                     format!("gp:{}", tool.id),
@@ -1326,7 +1331,9 @@ pub fn command_search(app: &mut RustGisApp, ctx: &egui::Context) {
         if !ql.is_empty() {
             for &(section, label) in crate::analysispane::SECTIONS.iter().filter(|s| crate::analysispane::section_shown(&app.session, s.0))
             {
-                if (label.to_lowercase().contains(&ql) || section.to_lowercase().contains(&ql) || tl!(label).to_lowercase().contains(&ql))
+                if (label.to_lowercase().contains(&ql)
+                    || section.to_lowercase().contains(&ql)
+                    || tl_raw!(label).to_lowercase().contains(&ql))
                     && !app.session.registry.commands.iter().any(|c| {
                         c.label == label
                             && matches!(search_action(c.id), Some(SearchAction::Workflow(s)) if s == section)
@@ -1382,7 +1389,7 @@ pub fn command_search(app: &mut RustGisApp, ctx: &egui::Context) {
             if id == "ui.touchInterface" && app.touch.is_none() {
                 continue;
             }
-            if ql.is_empty() || label.to_lowercase().contains(&ql) || tl!(label).to_lowercase().contains(&ql) {
+            if ql.is_empty() || label.to_lowercase().contains(&ql) || tl_raw!(label).to_lowercase().contains(&ql) {
                 hits.push((id.into(), tl!(label).into(), crate::i18n::location(loc)));
             }
         }
@@ -1672,6 +1679,17 @@ pub fn notices(app: &mut RustGisApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_search_matches_localized_labels_and_locations() {
+        let app = RustGisApp::with_sample();
+        let new_project = app.session.registry.get("project.new").unwrap();
+        let previous = crate::i18n::current();
+        crate::i18n::set_current(crate::i18n::lang_from_tag("zh").unwrap());
+        let matches = ["新建工程", "工程", "new project", "project.new"].map(|query| command_matches(new_project, query));
+        crate::i18n::set_current(previous);
+        assert_eq!(matches, [true; 4]);
+    }
 
     /// Command Search's Definition Query opens the Layer Properties pane on its Query tab (#1803),
     /// the dialog it opened being gone.
